@@ -1,8 +1,10 @@
+# .replit
 entrypoint = "main.py"
 modules = ["python-3.11"]
 
 [nix]
 channel = "stable-24_05"
+packages = ["vim"]
 
 [unitTest]
 language = "python3"
@@ -10,6 +12,12 @@ language = "python3"
 [gitHubImport]
 requiredFiles = [".replit", "replit.nix"]
 
-[deployment]
-run = ["python3", "main.py"]
-deploymentTarget = "cloudrun"
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[env]
+PORT = "8080"
+
+# Combined run: start FastAPI in the background, then bot
+run = "uvicorn oauth_server:app --host 0.0.0.0 --port $PORT & python3 main.py"
