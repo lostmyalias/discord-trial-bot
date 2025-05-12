@@ -1,4 +1,4 @@
-# bot.py
+# bot.py (Part 1 of 2)
 import os
 import secrets
 import discord
@@ -35,9 +35,9 @@ def parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 def is_staff():
-    def predicate(interaction: discord.Interaction) -> bool:
+    def pred(interaction: discord.Interaction) -> bool:
         return any(r.id in STAFF_ROLE_IDS for r in interaction.user.roles)
-    return app_commands.check(predicate)
+    return app_commands.check(pred)
 
 @bot.event
 async def on_ready():
@@ -48,11 +48,9 @@ async def on_ready():
         await tree.sync(guild=guild_obj)
     print(f"[✅] Bot ready as {bot.user} – commands synced to {GUILD_IDS}")
 
+
 # ── /trial ──
-@tree.command(
-    name="trial",
-    description="🔑 Claim your free SkySpoofer trial key!"
-)
+@tree.command(name="trial", description="🔑 Claim your free SkySpoofer trial key!")
 @app_commands.guild_only()
 async def trial(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -60,7 +58,7 @@ async def trial(interaction: discord.Interaction):
     user_id  = str(interaction.user.id)
     user_key = f"user:{user_id}"
 
-    # Anti-spam per user
+    # 1) Anti-spam per user
     last_spam = db.get(f"spam:{user_id}")
     if last_spam:
         diff = (now - parse_iso(last_spam)).total_seconds()
@@ -71,13 +69,11 @@ async def trial(interaction: discord.Interaction):
             )
     db[f"spam:{user_id}"] = now.isoformat()
 
-    # Cooldown
+    # 2) Configurable cooldown
     cd_days  = db.get("config:cooldown_days", DEFAULT_COOLDOWN)
-    cdd = cd_days
-    cooldown = timedelta(days=cdd)
+    cooldown = timedelta(days=cd_days)
 
-
-    # Frozen?
+    # 3) Frozen check
     if db.get("frozen", False):
         await interaction.followup.send("⏸️ Disbursement paused.", ephemeral=True)
         return await notify_staff(
@@ -86,13 +82,10 @@ async def trial(interaction: discord.Interaction):
             discord.Color.orange()
         )
 
-    # Not linked → OAuth
+    # 4) Not linked → send OAuth embed
     if user_key not in db:
         state = secrets.token_urlsafe(16)
-        db[f"state:{state}"] = {
-            "user_id": user_id,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
+        db[f"state:{state}"] = {"user_id": user_id, "created_at": now.isoformat()}
         oauth_url = (
             f"{OAUTH_BASE}?client_id={CLIENT_ID}"
             f"&redirect_uri={REDIRECT_URI}"
@@ -110,14 +103,13 @@ async def trial(interaction: discord.Interaction):
 
     user_data = db[user_key]
 
-    # Already has key? DM reminder + cooldown
+    # 5) Already has key? cooldown-aware DM reminder
     if "dispensed_key" in user_data:
-        ld = parse_iso(user_data["last_dispensed_at"])
-        if (now - ld) < cooldown:
-            rem = cooldown - (now - ld)
+        last = parse_iso(user_data["last_dispensed_at"])
+        if now - last < cooldown:
+            rem = cooldown - (now - last)
             d, s = rem.days, rem.seconds
             h, m = s // 3600, (s % 3600) // 60
-
             try:
                 await interaction.user.send(
                     f"🔁 You already have **{user_data['dispensed_key']}**.\n"
@@ -132,19 +124,17 @@ async def trial(interaction: discord.Interaction):
                     "⚠️ Please open your DMs so I can send key info.",
                     ephemeral=True
                 )
-
             return await notify_staff(
                 "⏳ Cooldown Active",
                 f"{interaction.user.mention} reminded of existing key; {d}d{h}h{m}m left.",
                 discord.Color.orange()
             )
-
-        # clear old record
+        # Clear old record for fresh dispense
         user_data.pop("dispensed_key", None)
         user_data.pop("last_dispensed_at", None)
         db[user_key] = user_data
 
-    # Low-pool alert
+    # 6) Low-pool alert
     left = sum(1 for k in db if k.startswith("key:"))
     if left <= LOW_POOL_THRESHOLD and not db.get("warned_low_pool"):
         db["warned_low_pool"] = True
@@ -156,47 +146,56 @@ async def trial(interaction: discord.Interaction):
     elif left > LOW_POOL_THRESHOLD and db.get("warned_low_pool"):
         del db["warned_low_pool"]
 
-    # Dispense & JIT delete
-    for k in list(db.keys()):
-        if k.startswith("key:"):
-            key_str = k.split("key:")[1]
-            # annotate user
-            user_data["dispensed_key"]     = key_str
-            user_data["last_dispensed_at"] = now.isoformat()
-            db[user_key] = user_data
-            # remove from pool
-            del db[k]
+    # 7) Dispense loop with brief lock
+    db["frozen"] = True
+    try:
+        for k in list(db.keys()):
+            if k.startswith("key:"):
+                key_str = k.split("key:")[1]
+                # Assign to user & remove from pool
+                user_data["dispensed_key"]     = key_str
+                user_data["last_dispensed_at"] = now.isoformat()
+                db[user_key] = user_data
+                del db[k]
 
-            try:
-                await interaction.user.send(
-                    f"🎉 Here’s your trial key:\n**{key_str}**\n"
-                    f"Next in {cdd} days."
-                )
-                await interaction.followup.send("✅ Trial key sent via DM!", ephemeral=True)
-                await notify_staff(
-                    "🔑 Key Dispensed",
-                    f"{interaction.user.mention} was issued **{key_str}**.",
-                    discord.Color.green()
-                )
-            except discord.Forbidden:
-                await interaction.followup.send(
-                    "⚠️ Please open your DMs so I can send your key.",
-                    ephemeral=True
-                )
-                await notify_staff(
-                    "📭 DM Delivery Failed",
-                    f"Could not DM {interaction.user.mention} **{key_str}**.",
-                    discord.Color.orange()
-                )
-            return
+                try:
+                    await interaction.user.send(
+                        f"🎉 Here’s your trial key:\n**{key_str}**\n"
+                        f"Next in {cd_days} days."
+                    )
+                    await interaction.followup.send(
+                        "✅ Trial key sent via DM!", ephemeral=True
+                    )
+                    await notify_staff(
+                        "🔑 Key Dispensed",
+                        f"{interaction.user.mention} was issued **{key_str}**.",
+                        discord.Color.green()
+                    )
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "⚠️ Please open your DMs so I can send your key.",
+                        ephemeral=True
+                    )
+                    await notify_staff(
+                        "📭 DM Delivery Failed",
+                        f"Could not DM {interaction.user.mention} **{key_str}**.",
+                        discord.Color.orange()
+                    )
+                return
 
-    # Pool exhausted
-    await interaction.followup.send("❌ All trial keys claimed—check back later.", ephemeral=True)
-    await notify_staff(
-        "❌ Pool Exhausted",
-        f"{interaction.user.mention} attempted to claim but no keys left.",
-        discord.Color.red()
-    )
+        # Pool exhausted
+        await interaction.followup.send(
+            "❌ All trial keys claimed—check back later or message staff.",
+            ephemeral=True
+        )
+        await notify_staff(
+            "❌ Pool Exhausted",
+            f"{interaction.user.mention} attempted to claim but no keys left.",
+            discord.Color.red()
+        )
+    finally:
+        db["frozen"] = False
+
 
 # ── Admin: List available keys only ──
 @tree.command(name="list_keys", description="📜 List all available keys")
@@ -216,6 +215,7 @@ async def list_keys(interaction: discord.Interaction):
         discord.Color.blue()
     )
 
+
 # ── Admin: Set cooldown ──
 @tree.command(name="set_cooldown_days", description="⏲️ Set trial cooldown")
 @is_staff()
@@ -231,7 +231,8 @@ async def set_cooldown_days(interaction: discord.Interaction, days: int):
         discord.Color.green()
     )
 
-# ── Admin: Freeze/Unfreeze ──
+
+# ── Admin: Freeze / Unfreeze ──
 @tree.command(name="freeze", description="⏸️ Pause key disbursement")
 @is_staff()
 @app_commands.guild_only()
@@ -256,63 +257,8 @@ async def unfreeze(interaction: discord.Interaction):
         discord.Color.green()
     )
 
-# ── Admin: Status ──
-    @tree.command(name="status", description="📊 Show key-distribution status")
-    @is_staff()
-    @app_commands.guild_only()
-    async def status(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        now = datetime.now(timezone.utc)
 
-        # ── 1) CLEANUP STALE STATE ENTRIES ──
-        for key in list(db.keys()):
-            if key.startswith("state:"):
-                entry = db[key]
-                # expect entry = {"user_id": "...", "created_at": "ISO8601"}
-                if isinstance(entry, dict) and "created_at" in entry:
-                    created = datetime.fromisoformat(entry["created_at"])
-                    if now - created > timedelta(hours=STATE_TTL_HOURS):
-                        del db[key]
-                else:
-                    # legacy or malformed state—purge it
-                    del db[key]
-
-        # ── 2) METRICS ──
-        # Remaining keys (all undeleted seed keys)
-        remaining = sum(1 for k in db if k.startswith("key:"))
-
-        # Dispense counts
-        disp24 = disp7 = 0
-        for k, v in db.items():
-            if k.startswith("user:") and "last_dispensed_at" in v:
-                delta = now - datetime.fromisoformat(v["last_dispensed_at"])
-                if delta <= timedelta(days=1):
-                    disp24 += 1
-                if delta <= timedelta(days=7):
-                    disp7 += 1
-
-        # Frozen flag
-        frozen = db.get("frozen", False)
-
-        # ── 3) RESPOND ──
-        embed = discord.Embed(
-            title="SkySpoofer Key Distribution Status",
-            description=(
-                f"**Remaining Keys:** {remaining}\n"
-                f"**Dispensed last 24 h:** {disp24}\n"
-                f"**Dispensed last 7 d:** {disp7}\n"
-                f"**Frozen:** {'Yes' if frozen else 'No'}"
-            ),
-            color=discord.Color.blurple()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        await notify_staff(
-            "📊 Admin Queried Status",
-            f"{interaction.user.mention} ran /status (cleaned up stale states).",
-            discord.Color.blue()
-        )
-
-# ── Admin: Add / Delete / Unlink ──
+# ── Admin: Add trial keys ──
 @tree.command(name="add_keys", description="➕ Add trial keys (comma-separated)")
 @is_staff()
 @app_commands.guild_only()
@@ -340,11 +286,19 @@ async def add_keys(interaction: discord.Interaction, keys: str):
         discord.Color.green()
     )
 
+
+# ── Admin: Delete All Keys ──
 @tree.command(name="delete_all_keys", description="🗑️ Wipe all keys")
 @is_staff()
 @app_commands.guild_only()
 async def delete_all_keys(interaction: discord.Interaction):
-    count = sum(1 for k in list(db.keys()) if k.startswith("key:") and db.pop(k, None) is not None)
+    # Remove every “key:” entry from the DB
+    count = 0
+    for k in list(db.keys()):
+        if k.startswith("key:"):
+            db.pop(k, None)
+            count += 1
+
     await interaction.response.send_message(f"🧨 Deleted {count} keys.", ephemeral=True)
     await notify_staff(
         "🧨 All Keys Wiped",
@@ -352,6 +306,59 @@ async def delete_all_keys(interaction: discord.Interaction):
         discord.Color.red()
     )
 
+
+# ── Admin: Status ──
+@tree.command(name="status", description="📊 Show key-distribution status")
+@is_staff()
+@app_commands.guild_only()
+async def status(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    now = datetime.now(timezone.utc)
+
+    # 1) Purge stale OAuth states
+    for key in list(db.keys()):
+        if key.startswith("state:"):
+            entry = db[key]
+            if isinstance(entry, dict) and "created_at" in entry:
+                created = parse_iso(entry["created_at"])
+                if now - created > timedelta(hours=STATE_TTL_HOURS):
+                    del db[key]
+            else:
+                del db[key]
+
+    # 2) Metrics
+    remaining = sum(1 for k in db if k.startswith("key:"))
+    disp24 = disp7 = 0
+    for k, v in db.items():
+        if k.startswith("user:") and "last_dispensed_at" in v:
+            delta = now - parse_iso(v["last_dispensed_at"])
+            if delta <= timedelta(days=1):
+                disp24 += 1
+            if delta <= timedelta(days=7):
+                disp7 += 1
+
+    frozen = db.get("frozen", False)
+
+    # 3) Single-embed response
+    embed = discord.Embed(
+        title="SkySpoofer Key Distribution Status",
+        description=(
+            f"**Remaining Keys:** {remaining}\n"
+            f"**Dispensed last 24 h:** {disp24}\n"
+            f"**Dispensed last 7 d:** {disp7}\n"
+            f"**Frozen:** {'Yes' if frozen else 'No'}"
+        ),
+        color=discord.Color.blurple()
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+    await notify_staff(
+        "📊 Admin Queried Status",
+        f"{interaction.user.mention} ran /status (stale states purged).",
+        discord.Color.blue()
+    )
+
+
+# ── Admin: Unlink User ──
 @tree.command(name="unlink", description="🔄 Unlink a user")
 @is_staff()
 @app_commands.guild_only()
@@ -359,15 +366,26 @@ async def unlink(interaction: discord.Interaction, user: discord.Member = None):
     target = user or interaction.user
     ukey   = f"user:{target.id}"
     if ukey in db:
+        rec = db[ukey]
+        # if they had a key, put it back in the pool
+        if "dispensed_key" in rec:
+            db[f"key:{rec['dispensed_key']}"] = {}
         del db[ukey]
-        await interaction.response.send_message(f"🔄 Unlinked {target.mention}.", ephemeral=True)
+
+        await interaction.response.send_message(
+            f"🔄 Unlinked {target.mention}.", ephemeral=True
+        )
         await notify_staff(
             "🔄 User Unlinked",
             f"{interaction.user.mention} unlinked {target.mention}.",
             discord.Color.orange()
         )
     else:
-        await interaction.response.send_message(f"ℹ️ {target.mention} not linked.", ephemeral=True)
+        await interaction.response.send_message(
+            f"ℹ️ {target.mention} not linked.", ephemeral=True
+        )
 
+
+# ── Entrypoint ──
 def run_bot():
     bot.run(BOT_TOKEN)

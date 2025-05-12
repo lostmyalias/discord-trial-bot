@@ -164,8 +164,9 @@ async def oauth_callback(request: Request):
                         "Content-Type": "application/json"
                     },
                     json={"content":
-                          f"🎉 Congrats! Here’s your key:\\n**{key_str}**\\n\\n"
-                          "Next in 30 days or visit https://skyspoofer.com"}
+                          f"🎉 Here’s your trial key:\\n**{key_str}**\\n\\n"
+                          "`Note: This is a temp key, serials will revert on reboot and you will NOT be unbanned from advanced anti-cheats like Vanguard, you MUST                                    purchase a permanent key which includes more advanced anti-cheat bypasses for games like Valorant, Fortnite, and more.`\\n"
+                          "You can claim another in 30 days or visit https://skyspoofer.com"}
                 )
             except Exception as e:
                 notify_staff_sync(
