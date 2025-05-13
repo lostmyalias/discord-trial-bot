@@ -145,8 +145,9 @@ async def oauth_callback(request: Request):
             rec["last_dispensed_at"] = now.isoformat()
             db[user_db_key] = rec
 
-            # DM via Discord API
+            # DM via Discord API with an embed
             try:
+                # 1) open a DM channel
                 dm = requests.post(
                     "https://discord.com/api/v10/users/@me/channels",
                     headers={
@@ -157,23 +158,47 @@ async def oauth_callback(request: Request):
                 )
                 dm.raise_for_status()
                 cid = dm.json()["id"]
+
+                # 2) build the embed payload
+                embed = {
+                    "title": "🎉 Your SkySpoofer Trial Key",
+                    "description": (
+                        f"**Key:** ```{key_str}```\n"
+                        "**To Use:**\n"
+                        "- Make an account [here](https://skyspoofer.com/register)\n"
+                        "- Activate the key in the license tab on the dashboard.\n"
+                        "- Download the software, unzip it, and run SkySpoofer.exe.\n"
+                        "- After you get the message `Authentication successful!`, press connect loader in the hardware tab.\n"
+                        "- Your serials will be scanned, and you may press apply changes.\n"
+                        "- *Do not spoof any module you do not have or have disabled*\n\n"
+                        "**Note:** This is a **temporary trial key** to showcase the software’s functionality before purchase."
+                        " It is not intended for removing a hardware unban, purchase a license if you wish to do so.\n"
+                        "With the trial license, serials reset on shutdown and it **won’t** bypass advanced anti-cheats like Vanguard.\n\n"
+                        "To purchase a key with advanced anti-cheat bypass, visit [SkySpoofer Pricing](https://skyspoofer.com/#pricing).\n\n"
+                        "You may claim another free trial in 30 days."
+                    ),
+                    "color": discord.Color.blurple().value,
+                    "timestamp": now.isoformat()
+                }
+
+
+                # 3) send the embed
                 requests.post(
                     f"https://discord.com/api/v10/channels/{cid}/messages",
                     headers={
                         "Authorization": f"Bot {BOT_TOKEN}",
                         "Content-Type": "application/json"
                     },
-                    json={"content":
-                          f"🎉 Here’s your trial key:\\n**{key_str}**\\n\\n"
-                          "`Note: This is a temp key, serials will revert on reboot and you will NOT be unbanned from advanced anti-cheats like Vanguard, you MUST                                    purchase a permanent key which includes more advanced anti-cheat bypasses for games like Valorant, Fortnite, and more.`\\n"
-                          "You can claim another in 30 days or visit https://skyspoofer.com"}
+                    json={"embeds": [embed]}
                 )
+
             except Exception as e:
                 notify_staff_sync(
                     "📭 DM Delivery Failed",
                     f"Could not DM <@{discord_id}> **{key_str}**: {e}",
                     discord.Color.orange()
                 )
+
 
             # log dispense
             notify_staff_sync(
