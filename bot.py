@@ -8,7 +8,7 @@ from replit import db
 from datetime import datetime, timezone, timedelta
 from log import notify_staff
 from typing import Optional
-
+import re
 
 # ── Config & Defaults ──
 CLIENT_ID         = os.environ["CLIENT_ID"]
@@ -25,9 +25,15 @@ else:
 
 DEFAULT_COOLDOWN  = 30  # days
 SPAM_COOLDOWN_SEC = 5   # seconds
-STAFF_ROLE_IDS    = [int(r) for r in os.environ.get("STAFF_ROLE_IDS","").split(",") if r.strip()]
-LOW_POOL_THRESHOLD= 20
-LOW_POOL_PING     = os.environ.get("LOW_POOL_PING", "@Staff")
+raw_staff = os.environ.get("STAFF_ROLE_IDS", "")
+raw_ids   = raw_staff.split(",") if raw_staff else []
+STAFF_ROLE_IDS = [
+    int(re.sub(r"\D", "", rid))
+    for rid in raw_ids
+    if re.search(r"\d", rid)
+]
+ROLE_MENTIONS = [f"<@&{rid}>" for rid in STAFF_ROLE_IDS]
+LOW_POOL_THRESHOLD = 20
 
 intents = discord.Intents.default()
 bot     = discord.Client(intents=intents)
@@ -168,11 +174,15 @@ async def trial(interaction: discord.Interaction):
     left = sum(1 for k in db if k.startswith("key:"))
     if left <= LOW_POOL_THRESHOLD and not db.get("warned_low_pool"):
         db["warned_low_pool"] = True
+
+        # ping all staff roles defined above
+        pings = " ".join(ROLE_MENTIONS)
         await notify_staff(
             "🚨 Low Key Pool",
-            f"{LOW_POOL_PING}, only **{left}** keys remain!",
+            f"{pings} only **{left}** keys remain!",
             discord.Color.red()
         )
+
     elif left > LOW_POOL_THRESHOLD and db.get("warned_low_pool"):
         del db["warned_low_pool"]
 
