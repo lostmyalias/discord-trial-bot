@@ -41,9 +41,8 @@ Designed exclusively for Replit:
 | `CLIENT_SECRET`   | Discord App Client Secret                                    | No               |
 | `BOT_TOKEN`       | Discord Bot Token                                            | No               |
 | `REDIRECT_URI`    | OAuth2 Redirect URI                                          | No               |
-| `LOG_WEBHOOK_URL` | Discord Webhook URL for audit logs                           | No               |
+| `LOG_WEBHOOK_URL` | Discord Webhook URL for audit logs                           | Yes              |
 | `GITHUB_TOKEN`    | GitHub token (e.g. for auto-updates)                         | No               |
-| `LOW_POOL_PING`   | Discord IDs to ping when key pool is low                     | Yes              |
 | `GUILD_IDS`       | Guild IDs where bot operates                                 | Yes              |
 | `STAFF_ROLE_IDS`  | Role IDs allowed to manage keys (add/delete/freeze)          | Yes              |
 
